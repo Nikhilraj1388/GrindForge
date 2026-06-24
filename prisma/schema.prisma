@@ -1,0 +1,485 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────────
+
+enum AuthProvider {
+  GOOGLE
+  EMAIL
+}
+
+enum GroupVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum GoalMode {
+  COMMON
+  PERSONAL
+  HYBRID
+}
+
+enum GroupMemberRole {
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+enum GroupMemberStatus {
+  ACTIVE
+  PENDING
+  REMOVED
+}
+
+enum GoalType {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum SessionStatus {
+  RUNNING
+  PAUSED
+  COMPLETED
+}
+
+enum WarningType {
+  IDLE
+  CHECKPOINT
+  OTHER
+}
+
+enum PartyDebtStatus {
+  PENDING
+  COMPLETED
+}
+
+enum FeedVisibility {
+  PUBLIC
+  GROUP
+}
+
+enum ReactionType {
+  LIKE
+  FIRE
+  CLAP
+}
+
+enum ChallengeType {
+  HOURS
+  STREAK
+  CUSTOM
+}
+
+enum JoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id             String       @id @default(uuid()) @db.Uuid
+  clerkId        String       @unique @map("clerk_id")
+  email          String       @unique
+  username       String       @unique
+  fullName       String?      @map("full_name")
+  profileImage   String?      @map("profile_image")
+  bio            String?
+  provider       AuthProvider @default(EMAIL)
+  forgeScore     Int          @default(0) @map("forge_score")
+  warningCount   Int          @default(0) @map("warning_count")
+  partyDebtCount Int          @default(0) @map("party_debt_count")
+  currentStreak  Int          @default(0) @map("current_streak")
+  bestStreak     Int          @default(0) @map("best_streak")
+  isPublic       Boolean      @default(true) @map("is_public")
+  isActive       Boolean      @default(true) @map("is_active")
+  lastSeen       DateTime?    @map("last_seen")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  statistics            UserStatistics?
+  groupMemberships      GroupMember[]
+  adminGroups           Group[]                @relation("GroupAdmin")
+  userGoals             UserGoal[]
+  studySessions         StudySession[]
+  learningCheckpoints   LearningCheckpoint[]
+  warnings              Warning[]
+  partyDebts            PartyDebt[]
+  partyDebtsMarked      PartyDebt[]            @relation("PartyDebtMarker")
+  feedPosts             FeedPost[]
+  comments              Comment[]
+  reactions             Reaction[]
+  challengeParticipants ChallengeParticipant[]
+  challengesCreated     Challenge[]            @relation("ChallengeCreator")
+  userAchievements      UserAchievement[]
+  notifications         Notification[]
+  joinRequests          JoinRequest[]
+  groupGoalsCreated     GroupGoal[]
+
+  @@index([email])
+  @@index([username])
+  @@index([forgeScore])
+  @@map("users")
+}
+
+model UserStatistics {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @map("user_id") @db.Uuid
+  dailyHours          Int      @default(0) @map("daily_hours")
+  weeklyHours         Int      @default(0) @map("weekly_hours")
+  monthlyHours        Int      @default(0) @map("monthly_hours")
+  allTimeHours        Int      @default(0) @map("all_time_hours")
+  totalSessions       Int      @default(0) @map("total_sessions")
+  completedGoals      Int      @default(0) @map("completed_goals")
+  failedGoals         Int      @default(0) @map("failed_goals")
+  challengesCompleted Int      @default(0) @map("challenges_completed")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_statistics")
+}
+
+model Group {
+  id                  String          @id @default(uuid()) @db.Uuid
+  name                String
+  slug                String          @unique
+  description         String?
+  coverImage          String?         @map("cover_image")
+  visibility          GroupVisibility @default(PRIVATE)
+  goalMode            GoalMode        @default(COMMON) @map("goal_mode")
+  partyMode           Boolean         @default(false) @map("party_mode")
+  checkpointFrequency Int?            @map("checkpoint_frequency")
+  idleTimeoutMinutes  Int             @default(10) @map("idle_timeout_minutes")
+  allowJoinRequests   Boolean         @default(true) @map("allow_join_requests")
+  adminId             String          @map("admin_id") @db.Uuid
+  memberCount         Int             @default(0) @map("member_count")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  admin         User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members       GroupMember[]
+  goals         GroupGoal[]
+  userGoals     UserGoal[]
+  studySessions StudySession[]
+  warnings      Warning[]
+  partyDebts    PartyDebt[]
+  feedPosts     FeedPost[]
+  joinRequests  JoinRequest[]
+
+  @@index([slug])
+  @@index([visibility])
+  @@index([adminId])
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String            @id @default(uuid()) @db.Uuid
+  groupId  String            @map("group_id") @db.Uuid
+  userId   String            @map("user_id") @db.Uuid
+  role     GroupMemberRole   @default(MEMBER)
+  status   GroupMemberStatus @default(ACTIVE)
+  joinedAt DateTime          @default(now()) @map("joined_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model GroupGoal {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  goalType    GoalType @map("goal_type")
+  targetHours Int      @map("target_hours")
+  createdById String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  group     Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@index([groupId])
+  @@map("group_goals")
+}
+
+model UserGoal {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  goalType    GoalType @map("goal_type")
+  targetHours Int      @map("target_hours")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([groupId])
+  @@map("user_goals")
+}
+
+model StudySession {
+  id                   String        @id @default(uuid()) @db.Uuid
+  userId               String        @map("user_id") @db.Uuid
+  groupId              String?       @map("group_id") @db.Uuid
+  subject              String
+  topic                String?
+  description          String?
+  resourceLink         String?       @map("resource_link")
+  notionLink           String?       @map("notion_link")
+  status               SessionStatus @default(PAUSED)
+  totalDurationSeconds Int           @default(0) @map("total_duration_seconds")
+  startedAt            DateTime?     @map("started_at")
+  endedAt              DateTime?     @map("ended_at")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group       Group?               @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  state       SessionState?
+  checkpoints LearningCheckpoint[]
+  warnings    Warning[]
+  feedPosts   FeedPost[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("study_sessions")
+}
+
+model SessionState {
+  id                     String    @id @default(uuid()) @db.Uuid
+  sessionId              String    @unique @map("session_id") @db.Uuid
+  lastActiveTimestamp    DateTime  @map("last_active_timestamp")
+  currentDurationSeconds Int       @default(0) @map("current_duration_seconds")
+  isActive               Boolean   @default(false) @map("is_active")
+  lastMouseActivity      DateTime? @map("last_mouse_activity")
+  lastKeyboardActivity   DateTime? @map("last_keyboard_activity")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  session StudySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("session_states")
+}
+
+model LearningCheckpoint {
+  id        String   @id @default(uuid()) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  response  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session StudySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId])
+  @@map("learning_checkpoints")
+}
+
+model Warning {
+  id          String      @id @default(uuid()) @db.Uuid
+  userId      String      @map("user_id") @db.Uuid
+  groupId     String?     @map("group_id") @db.Uuid
+  sessionId   String?     @map("session_id") @db.Uuid
+  warningType WarningType @map("warning_type")
+  message     String
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  session StudySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([groupId])
+  @@map("warnings")
+}
+
+model PartyDebt {
+  id          String          @id @default(uuid()) @db.Uuid
+  groupId     String          @map("group_id") @db.Uuid
+  userId      String          @map("user_id") @db.Uuid
+  reason      String
+  status      PartyDebtStatus @default(PENDING)
+  markedById  String?         @map("marked_by") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at")
+  completedAt DateTime?       @map("completed_at")
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  markedBy User? @relation("PartyDebtMarker", fields: [markedById], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([status])
+  @@map("party_debts")
+}
+
+model FeedPost {
+  id            String         @id @default(uuid()) @db.Uuid
+  userId        String         @map("user_id") @db.Uuid
+  groupId       String?        @map("group_id") @db.Uuid
+  sessionId     String?        @map("session_id") @db.Uuid
+  content       String
+  resourceLink  String?        @map("resource_link")
+  notionLink    String?        @map("notion_link")
+  visibility    FeedVisibility @default(GROUP)
+  likesCount    Int            @default(0) @map("likes_count")
+  commentsCount Int            @default(0) @map("comments_count")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group     Group?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  session   StudySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  comments  Comment[]
+  reactions Reaction[]
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("feed_posts")
+}
+
+model Comment {
+  id        String   @id @default(uuid()) @db.Uuid
+  postId    String   @map("post_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post FeedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("comments")
+}
+
+model Reaction {
+  id           String       @id @default(uuid()) @db.Uuid
+  postId       String       @map("post_id") @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  reactionType ReactionType @map("reaction_type")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  post FeedPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("reactions")
+}
+
+model Challenge {
+  id            String        @id @default(uuid()) @db.Uuid
+  title         String
+  description   String?
+  challengeType ChallengeType @map("challenge_type")
+  goalValue     Int           @map("goal_value")
+  durationDays  Int           @map("duration_days")
+  isPublic      Boolean       @default(true) @map("is_public")
+  createdById   String        @map("created_by") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  createdBy    User                   @relation("ChallengeCreator", fields: [createdById], references: [id])
+  participants ChallengeParticipant[]
+
+  @@index([createdById])
+  @@map("challenges")
+}
+
+model ChallengeParticipant {
+  id          String   @id @default(uuid()) @db.Uuid
+  challengeId String   @map("challenge_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  progress    Int      @default(0)
+  joinedAt    DateTime @default(now()) @map("joined_at")
+
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+  @@index([challengeId])
+  @@index([userId])
+  @@map("challenge_participants")
+}
+
+model Achievement {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  icon        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  achievementId String   @map("achievement_id") @db.Uuid
+  earnedAt      DateTime @default(now()) @map("earned_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([achievementId])
+  @@map("user_achievements")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@map("notifications")
+}
+
+model JoinRequest {
+  id        String            @id @default(uuid()) @db.Uuid
+  groupId   String            @map("group_id") @db.Uuid
+  userId    String            @map("user_id") @db.Uuid
+  status    JoinRequestStatus @default(PENDING)
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([userId])
+  @@map("join_requests")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
