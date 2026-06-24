@@ -10,7 +10,19 @@ import { cn } from "@/lib/utils";
 type Member = {
   id: string;
   role: "ADMIN" | "MODERATOR" | "MEMBER";
-  user: { id: string; username: string | null; fullName: string | null; profileImage: string | null; forgeScore: number; currentStreak: number };
+  user: {
+    id: string;
+    username: string | null;
+    fullName: string | null;
+    profileImage: string | null;
+    forgeScore: number;
+    currentStreak: number;
+    statistics: {
+      dailyHours: number;
+      weeklyHours: number;
+      allTimeHours: number;
+    } | null;
+  };
 };
 type GroupDetail = {
   id: string; name: string; slug: string; description: string | null;
@@ -361,9 +373,17 @@ export default function GroupDetailPage() {
       )}
 
 
-      {/* Members */}
+      {/* Members & Leaderboard */}
       <div className="mt-6 rounded-2xl border border-border bg-card p-6">
-        <h2 className="text-sm font-semibold text-foreground">Members ({group._count.members})</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Weekly Competition Leaderboard</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Ranked by study hours this week</p>
+          </div>
+          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+            {group.members.length} active
+          </span>
+        </div>
 
         {isAdmin && (
           <div className="mt-4 border-b border-border pb-4">
@@ -390,41 +410,67 @@ export default function GroupDetailPage() {
         )}
 
         <div className="mt-4 space-y-2">
-          {group.members.map((member) => (
-            <div key={member.id} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-secondary/50">
-              <div className="size-9 rounded-full bg-secondary flex items-center justify-center">
-                {member.user.profileImage ? (
-                  <img src={member.user.profileImage} alt="" className="size-9 rounded-full object-cover" />
-                ) : (
-                  <Users className="size-4 text-muted-foreground" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">
-                  {member.user.fullName || member.user.username || "User"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Score: {member.user.forgeScore} · Streak: {member.user.currentStreak}d
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {member.role === "ADMIN" && <span className="flex items-center gap-1 text-[10px] font-medium text-primary"><Crown className="size-3" /> Admin</span>}
-                {member.role === "MODERATOR" && <span className="flex items-center gap-1 text-[10px] font-medium text-[#22c55e]"><Shield className="size-3" /> Mod</span>}
-                {isAdmin && member.role !== "ADMIN" && (
-                  <>
-                    <button onClick={() => handleChangeRole(member.user.id, member.role === "MODERATOR" ? "MEMBER" : "MODERATOR")}
-                      className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary" title={member.role === "MODERATOR" ? "Demote" : "Promote"}>
-                      <Shield className="size-3.5" />
-                    </button>
-                    <button onClick={() => handleRemove(member.user.id)}
-                      className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10" title="Remove">
-                      <UserMinus className="size-3.5" />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
+          {[...(group.members || [])]
+            .sort((a, b) => {
+              const aHours = a.user.statistics?.weeklyHours || 0;
+              const bHours = b.user.statistics?.weeklyHours || 0;
+              if (bHours !== aHours) return bHours - aHours;
+              return (b.user.forgeScore || 0) - (a.user.forgeScore || 0);
+            })
+            .map((member, index) => {
+              const weeklyHours = member.user.statistics?.weeklyHours || 0;
+              const allTimeHours = member.user.statistics?.allTimeHours || 0;
+              
+              let rankEmoji = "";
+              if (index === 0) rankEmoji = "🥇";
+              else if (index === 1) rankEmoji = "🥈";
+              else if (index === 2) rankEmoji = "🥉";
+              else rankEmoji = `#${index + 1}`;
+
+              return (
+                <div key={member.id} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-secondary/50">
+                  <div className="text-sm font-bold w-6 text-center text-muted-foreground shrink-0">
+                    {rankEmoji}
+                  </div>
+                  <div className="size-9 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                    {member.user.profileImage ? (
+                      <img src={member.user.profileImage} alt="" className="size-9 rounded-full object-cover" />
+                    ) : (
+                      <Users className="size-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {member.user.fullName || member.user.username || "User"}
+                    </p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                      <span>Score: {member.user.forgeScore}</span>
+                      <span>·</span>
+                      <span>Streak: {member.user.currentStreak}d</span>
+                      <span>·</span>
+                      <span className="font-semibold text-primary">Studied: {weeklyHours.toFixed(1)}h this week</span>
+                      <span className="text-[10px] text-muted-foreground">({allTimeHours.toFixed(1)}h total)</span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {member.role === "ADMIN" && <span className="flex items-center gap-1 text-[10px] font-medium text-primary"><Crown className="size-3" /> Admin</span>}
+                    {member.role === "MODERATOR" && <span className="flex items-center gap-1 text-[10px] font-medium text-[#22c55e]"><Shield className="size-3" /> Mod</span>}
+                    {isAdmin && member.role !== "ADMIN" && (
+                      <>
+                        <button onClick={() => handleChangeRole(member.user.id, member.role === "MODERATOR" ? "MEMBER" : "MODERATOR")}
+                          className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary" title={member.role === "MODERATOR" ? "Demote" : "Promote"}>
+                          <Shield className="size-3.5" />
+                        </button>
+                        <button onClick={() => handleRemove(member.user.id)}
+                          className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10" title="Remove">
+                          <UserMinus className="size-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
         </div>
       </div>
     </div>

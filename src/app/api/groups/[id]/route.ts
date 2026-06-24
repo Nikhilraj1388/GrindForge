@@ -43,6 +43,13 @@ export async function GET(
                 profileImage: true,
                 forgeScore: true,
                 currentStreak: true,
+                statistics: {
+                  select: {
+                    dailyHours: true,
+                    weeklyHours: true,
+                    allTimeHours: true,
+                  },
+                },
               },
             },
           },

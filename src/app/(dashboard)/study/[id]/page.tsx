@@ -42,6 +42,12 @@ export default function StudySessionPage() {
 
   useEffect(() => { fetchSession(); }, [fetchSession]);
 
+  // Keep a ref of elapsed time to avoid resetting intervals every second
+  const elapsedRef = useRef(elapsed);
+  useEffect(() => {
+    elapsedRef.current = elapsed;
+  }, [elapsed]);
+
   // Timer
   useEffect(() => {
     if (session?.status === "RUNNING") {
@@ -50,40 +56,67 @@ export default function StudySessionPage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [session?.status]);
 
-  // Heartbeat: auto-save every 30s
+  // Heartbeat: auto-save every 30s (no longer recreates every second)
   useEffect(() => {
     if (session?.status === "RUNNING") {
       heartbeatRef.current = setInterval(async () => {
         await fetch(`/api/sessions/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsed }),
+          body: JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsedRef.current }),
         });
       }, 30000);
     }
     return () => { if (heartbeatRef.current) clearInterval(heartbeatRef.current); };
-  }, [session?.status, id, elapsed]);
+  }, [session?.status, id]);
 
-  // Save on unload
+  // Save on unload (no longer recreates every second)
   useEffect(() => {
     const handleUnload = () => {
       if (session?.status === "RUNNING") {
-        navigator.sendBeacon(`/api/sessions/${id}`, JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsed }));
+        navigator.sendBeacon(`/api/sessions/${id}`, JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsedRef.current }));
       }
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => window.removeEventListener("beforeunload", handleUnload);
-  }, [session?.status, id, elapsed]);
+  }, [session?.status, id]);
 
   async function handleAction(action: "pause" | "resume" | "stop") {
     if (action === "stop" && !confirm("Stop this session?")) return;
-    await fetch(`/api/sessions/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, currentDurationSeconds: elapsed }),
-    });
-    if (action === "stop") { router.push("/study"); return; }
-    fetchSession();
+
+    // Optimistically update the UI to avoid lag
+    const previousSession = session;
+    if (action === "pause") {
+      setSession((prev) => prev ? { ...prev, status: "PAUSED" } : null);
+    } else if (action === "resume") {
+      setSession((prev) => prev ? { ...prev, status: "RUNNING" } : null);
+    } else if (action === "stop") {
+      setSession((prev) => prev ? { ...prev, status: "COMPLETED" } : null);
+    }
+
+    try {
+      const res = await fetch(`/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, currentDurationSeconds: elapsed }),
+      });
+      
+      if (!res.ok) {
+        // Revert on error
+        setSession(previousSession);
+        alert("Failed to update study session. Please try again.");
+      } else {
+        if (action === "stop") {
+          router.push("/study");
+        } else {
+          // Re-fetch the session in background to sync any other metadata
+          fetchSession();
+        }
+      }
+    } catch (err) {
+      setSession(previousSession);
+      console.error("Session action error:", err);
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center min-h-[60vh]"><div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
