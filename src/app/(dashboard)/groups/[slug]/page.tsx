@@ -21,6 +21,21 @@ type GroupDetail = {
   _count: { members: number; studySessions: number };
 };
 
+type GroupGoal = {
+  id: string;
+  goalType: "DAILY" | "WEEKLY" | "MONTHLY";
+  targetHours: number;
+  createdAt: string;
+  createdBy?: { username: string | null; fullName: string | null };
+};
+
+type UserGoal = {
+  id: string;
+  goalType: "DAILY" | "WEEKLY" | "MONTHLY";
+  targetHours: number;
+  createdAt: string;
+};
+
 export default function GroupDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
@@ -34,6 +49,31 @@ export default function GroupDetailPage() {
   const [inviting, setInviting] = useState(false);
   const [inviteMsg, setInviteMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Goals state
+  const [groupGoals, setGroupGoals] = useState<GroupGoal[]>([]);
+  const [userGoals, setUserGoals] = useState<UserGoal[]>([]);
+  const [goalsLoading, setGoalsLoading] = useState(true);
+  const [goalType, setGoalType] = useState<"DAILY" | "WEEKLY" | "MONTHLY">("DAILY");
+  const [targetHours, setTargetHours] = useState<number>(2);
+  const [isPersonalGoal, setIsPersonalGoal] = useState(false);
+  const [settingGoal, setSettingGoal] = useState(false);
+  const [goalMsg, setGoalMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const fetchGoals = useCallback(async (groupId: string) => {
+    try {
+      const res = await fetch(`/api/groups/${groupId}/goals`);
+      if (res.ok) {
+        const data = await res.json();
+        setGroupGoals(data.groupGoals || []);
+        setUserGoals(data.userGoals || []);
+      }
+    } catch (err) {
+      console.error("Error fetching goals:", err);
+    } finally {
+      setGoalsLoading(false);
+    }
+  }, []);
+
   const fetchGroup = useCallback(async () => {
     const res = await fetch(`/api/groups/${slug}`);
     if (res.ok) {
@@ -41,9 +81,10 @@ export default function GroupDetailPage() {
       setGroup(data.group);
       setIsMember(data.isMember);
       setIsAdmin(data.isAdmin);
+      fetchGoals(data.group.id);
     }
     setLoading(false);
-  }, [slug]);
+  }, [slug, fetchGoals]);
 
   useEffect(() => { fetchGroup(); }, [fetchGroup]);
 
@@ -102,6 +143,35 @@ export default function GroupDetailPage() {
     }
   }
 
+  async function handleSetGoal(e: React.FormEvent) {
+    e.preventDefault();
+    if (!group) return;
+    setSettingGoal(true);
+    setGoalMsg(null);
+    try {
+      const res = await fetch(`/api/groups/${group.id}/goals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goalType,
+          targetHours,
+          isPersonal: isPersonalGoal || group.goalMode === "PERSONAL",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGoalMsg({ type: "success", text: "Goal set successfully!" });
+        fetchGoals(group.id);
+      } else {
+        setGoalMsg({ type: "error", text: data.error || "Failed to set goal." });
+      }
+    } catch {
+      setGoalMsg({ type: "error", text: "Something went wrong." });
+    } finally {
+      setSettingGoal(false);
+    }
+  }
+
   if (loading) return <div className="flex items-center justify-center min-h-[50vh]"><div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   if (!group) return <div className="p-6 text-center text-muted-foreground">Group not found</div>;
 
@@ -147,6 +217,149 @@ export default function GroupDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Goals & Study Limits */}
+      {isMember && (
+        <div className="mt-6 grid gap-6 md:grid-cols-3">
+          {/* Active Goals list */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Clock className="size-4 text-primary" /> Study Limits & Targets
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Current study target hours for this group (Goal Mode: <span className="font-semibold text-foreground">{group.goalMode}</span>)
+            </p>
+
+            <div className="mt-4 space-y-4">
+              {/* Group Goals */}
+              {group.goalMode !== "PERSONAL" && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Common Group Goals</h3>
+                  {goalsLoading ? (
+                    <div className="mt-2 h-10 animate-pulse bg-secondary rounded-lg" />
+                  ) : groupGoals.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted-foreground italic">No group goals set yet.</p>
+                  ) : (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {groupGoals.map((g) => (
+                        <div key={g.id} className="rounded-lg border border-border bg-secondary/30 p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary uppercase">
+                              {g.goalType}
+                            </span>
+                            <span className="text-xs text-muted-foreground">Target Limit</span>
+                          </div>
+                          <p className="mt-1.5 text-lg font-bold text-foreground">
+                            {g.targetHours} {g.targetHours === 1 ? "hour" : "hours"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Personal Goals */}
+              {group.goalMode !== "COMMON" && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Your Personal Targets</h3>
+                  {goalsLoading ? (
+                    <div className="mt-2 h-10 animate-pulse bg-secondary rounded-lg" />
+                  ) : userGoals.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted-foreground italic">You haven&apos;t set any personal study targets for this group.</p>
+                  ) : (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {userGoals.map((g) => (
+                        <div key={g.id} className="rounded-lg border border-border bg-secondary/30 p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary uppercase">
+                              {g.goalType}
+                            </span>
+                            <span className="text-xs text-muted-foreground">My Limit</span>
+                          </div>
+                          <p className="mt-1.5 text-lg font-bold text-foreground">
+                            {g.targetHours} {g.targetHours === 1 ? "hour" : "hours"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Set Goal Form */}
+          <div className="rounded-2xl border border-border bg-card p-6">
+            <h2 className="text-sm font-semibold text-foreground">Set Study Limit / Goal</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isAdmin 
+                ? "Define study targets for yourself or the entire group." 
+                : "Define your personal study targets."}
+            </p>
+
+            <form onSubmit={handleSetGoal} className="mt-4 space-y-4">
+              {/* Goal Type */}
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase">Goal Frequency</label>
+                <select
+                  value={goalType}
+                  onChange={(e) => setGoalType(e.target.value as "DAILY" | "WEEKLY" | "MONTHLY")}
+                  className="mt-1 w-full rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="DAILY">Daily</option>
+                  <option value="WEEKLY">Weekly</option>
+                  <option value="MONTHLY">Monthly</option>
+                </select>
+              </div>
+
+              {/* Target Hours */}
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase">Target Hours</label>
+                <input
+                  type="number"
+                  value={targetHours}
+                  onChange={(e) => setTargetHours(Math.max(1, Number(e.target.value)))}
+                  min={1}
+                  max={720}
+                  className="mt-1 w-full rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {/* Admin toggle for Personal vs Group goal */}
+              {isAdmin && group.goalMode === "HYBRID" && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="isPersonal"
+                    checked={isPersonalGoal}
+                    onChange={(e) => setIsPersonalGoal(e.target.checked)}
+                    className="size-4 rounded border-border accent-primary"
+                  />
+                  <label htmlFor="isPersonal" className="text-xs text-muted-foreground cursor-pointer select-none">
+                    Set as personal goal only
+                  </label>
+                </div>
+              )}
+
+              {goalMsg && (
+                <p className={cn("text-xs", goalMsg.type === "success" ? "text-[#22c55e]" : "text-destructive")}>
+                  {goalMsg.text}
+                </p>
+              )}
+
+              <Button
+                type="submit"
+                disabled={settingGoal}
+                className="w-full h-8 text-xs font-semibold"
+              >
+                {settingGoal ? "Saving..." : "Set Target Limit"}
+              </Button>
+            </form>
+          </div>
+        </div>
+      )}
+
 
       {/* Members */}
       <div className="mt-6 rounded-2xl border border-border bg-card p-6">
