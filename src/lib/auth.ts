@@ -68,6 +68,9 @@ export async function syncUser() {
       fullName,
       profileImage: clerkUser.imageUrl,
       provider,
+      statistics: {
+        create: {},
+      },
     },
     include: { statistics: true },
   });

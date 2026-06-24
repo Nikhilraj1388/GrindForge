@@ -121,10 +121,11 @@ export async function PATCH(
             where: { id: session.state.id },
             data: { isActive: false, currentDurationSeconds: finalDuration },
           })] : []),
-          // Update user statistics
-          prisma.userStatistics.update({
+          // Update user statistics (upsert to handle missing stats records)
+          prisma.userStatistics.upsert({
             where: { userId: user.id },
-            data: { totalSessions: { increment: 1 } },
+            create: { userId: user.id, totalSessions: 1 },
+            update: { totalSessions: { increment: 1 } },
           }),
         ]);
 

@@ -50,12 +50,24 @@ export async function GET() {
     const monthlyHours = (monthSessions._sum.totalDurationSeconds || 0) / 3600;
     const allTimeHours = (allTimeSessions._sum.totalDurationSeconds || 0) / 3600;
 
-    if (user.statistics) {
-      await prisma.userStatistics.update({
-        where: { userId: user.id },
-        data: { dailyHours, weeklyHours, monthlyHours, allTimeHours, totalSessions: allTimeSessions._count },
-      });
-    }
+    await prisma.userStatistics.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        dailyHours,
+        weeklyHours,
+        monthlyHours,
+        allTimeHours,
+        totalSessions: allTimeSessions._count,
+      },
+      update: {
+        dailyHours,
+        weeklyHours,
+        monthlyHours,
+        allTimeHours,
+        totalSessions: allTimeSessions._count,
+      },
+    });
 
     // Recent sessions for chart data (last 7 days)
     const last7Days = Array.from({ length: 7 }, (_, i) => {
