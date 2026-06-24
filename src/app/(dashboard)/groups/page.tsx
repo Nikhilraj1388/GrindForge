@@ -19,14 +19,30 @@ type Group = {
   admin: { username: string | null; fullName: string | null };
 };
 
+type Invitation = {
+  id: string;
+  groupId: string;
+  group: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    visibility: "PUBLIC" | "PRIVATE";
+    memberCount: number;
+    admin: { username: string | null; fullName: string | null };
+  };
+};
+
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchGroups();
+    fetchInvitations();
   }, [filter]);
 
   async function fetchGroups() {
@@ -41,9 +57,37 @@ export default function GroupsPage() {
     setLoading(false);
   }
 
+  async function fetchInvitations() {
+    try {
+      const res = await fetch("/api/groups/invitations");
+      if (res.ok) {
+        const data = await res.json();
+        setInvitations(data.invitations || []);
+      }
+    } catch (err) {
+      console.error("Error fetching invitations:", err);
+    }
+  }
+
   async function handleJoin(groupId: string) {
     const res = await fetch(`/api/groups/${groupId}/join`, { method: "POST" });
     if (res.ok) fetchGroups();
+  }
+
+  async function handleInvitationAction(groupId: string, action: "accept" | "reject") {
+    try {
+      const res = await fetch("/api/groups/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId, action }),
+      });
+      if (res.ok) {
+        fetchInvitations();
+        fetchGroups();
+      }
+    } catch (err) {
+      console.error("Error responding to invitation:", err);
+    }
   }
 
   return (
@@ -59,6 +103,43 @@ export default function GroupsPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Group Invitations Panel */}
+      {invitations.length > 0 && (
+        <div className="mt-6 rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <h2 className="text-sm font-bold text-foreground">Group Invitations</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Admins have invited you to join these groups:</p>
+          <div className="mt-3 space-y-3">
+            {invitations.map((inv) => (
+              <div key={inv.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border bg-card p-4">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">{inv.group.name}</h3>
+                  {inv.group.description && <p className="text-xs text-muted-foreground mt-1 max-w-md">{inv.group.description}</p>}
+                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                    Invited by: {inv.group.admin.fullName || inv.group.admin.username || "Admin"} · {inv.group.memberCount} members
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => handleInvitationAction(inv.groupId, "accept")}
+                    className="h-8 text-xs font-semibold px-4"
+                  >
+                     Accept
+                  </Button>
+                  <Button
+                    onClick={() => handleInvitationAction(inv.groupId, "reject")}
+                    variant="outline"
+                    className="h-8 text-xs font-semibold px-4 border-destructive text-destructive hover:bg-destructive/10"
+                  >
+                     Decline
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
 
       {/* Filters + Search */}
       <div className="mt-5 flex items-center gap-3">

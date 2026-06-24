@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useUser } from "@clerk/nextjs";
-import { Flame, Save, User, AtSign, FileText } from "lucide-react";
+import { useUser, useClerk } from "@clerk/nextjs";
+import { Flame, Save, User, AtSign, FileText, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function SettingsPage() {
   const { user, isLoaded } = useUser();
+  const { signOut } = useClerk();
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [isPublic, setIsPublic] = useState(true);
@@ -226,6 +227,22 @@ export default function SettingsPage() {
           {loading ? "Saving..." : "Save Changes"}
         </Button>
       </form>
+
+      {/* Account Actions Section */}
+      <div className="mt-8 border-t border-border pt-6">
+        <h2 className="text-lg font-bold text-foreground">Account Actions</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Sign out of your GrindForge account</p>
+        <div className="mt-4">
+          <Button
+            type="button"
+            onClick={() => signOut()}
+            variant="destructive"
+            className="h-10 px-6 text-sm font-semibold gap-1.5"
+          >
+            <LogOut className="size-4" /> Sign Out
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

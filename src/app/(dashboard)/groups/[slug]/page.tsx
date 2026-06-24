@@ -29,6 +29,11 @@ export default function GroupDetailPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Invite state
+  const [inviteUsername, setInviteUsername] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const fetchGroup = useCallback(async () => {
     const res = await fetch(`/api/groups/${slug}`);
     if (res.ok) {
@@ -70,6 +75,31 @@ export default function GroupDetailPage() {
       body: JSON.stringify({ action: "changeRole", targetUserId: userId, role }),
     });
     fetchGroup();
+  }
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    if (!inviteUsername.trim() || !group) return;
+    setInviting(true);
+    setInviteMsg(null);
+    try {
+      const res = await fetch(`/api/groups/${group.id}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: inviteUsername.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInviteMsg({ type: "success", text: data.message || "Invitation sent!" });
+        setInviteUsername("");
+      } else {
+        setInviteMsg({ type: "error", text: data.error || "Failed to invite user." });
+      }
+    } catch {
+      setInviteMsg({ type: "error", text: "Something went wrong." });
+    } finally {
+      setInviting(false);
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center min-h-[50vh]"><div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
@@ -121,6 +151,31 @@ export default function GroupDetailPage() {
       {/* Members */}
       <div className="mt-6 rounded-2xl border border-border bg-card p-6">
         <h2 className="text-sm font-semibold text-foreground">Members ({group._count.members})</h2>
+
+        {isAdmin && (
+          <div className="mt-4 border-b border-border pb-4">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Invite User to Group</h3>
+            <form onSubmit={handleInvite} className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={inviteUsername}
+                onChange={(e) => setInviteUsername(e.target.value)}
+                placeholder="Enter username to invite..."
+                className="flex-1 rounded-lg border border-border bg-secondary px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                disabled={inviting}
+              />
+              <Button type="submit" disabled={inviting || !inviteUsername.trim()} className="h-8 text-xs font-semibold px-4">
+                {inviting ? "Inviting..." : "Invite"}
+              </Button>
+            </form>
+            {inviteMsg && (
+              <p className={cn("mt-2 text-xs", inviteMsg.type === "success" ? "text-[#22c55e]" : "text-destructive")}>
+                {inviteMsg.text}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 space-y-2">
           {group.members.map((member) => (
             <div key={member.id} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-secondary/50">
@@ -162,3 +217,4 @@ export default function GroupDetailPage() {
     </div>
   );
 }
+
