@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Flame, Pause, Play, Square, ExternalLink } from "lucide-react";
+import { Pause, Play, Square, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type SessionData = {
@@ -17,8 +17,42 @@ type SessionData = {
 function formatTime(seconds: number) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
+  const s = Math.floor(seconds % 60);
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+// ─── localStorage helpers for persisting timer state ───
+const STORAGE_KEY_PREFIX = "grindforge_timer_";
+
+type PersistedTimerState = {
+  wallStartTime: number;       // Date.now() when session last started/resumed
+  accumulatedSeconds: number;  // seconds accumulated before the last start/resume
+  status: "RUNNING" | "PAUSED" | "COMPLETED";
+};
+
+function saveTimerState(sessionId: string, state: PersistedTimerState) {
+  try {
+    localStorage.setItem(STORAGE_KEY_PREFIX + sessionId, JSON.stringify(state));
+  } catch { /* quota exceeded or SSR — ignore */ }
+}
+
+function loadTimerState(sessionId: string): PersistedTimerState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PREFIX + sessionId);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function clearTimerState(sessionId: string) {
+  try {
+    localStorage.removeItem(STORAGE_KEY_PREFIX + sessionId);
+  } catch { /* ignore */ }
+}
+
+// ─── Compute elapsed from wall‑clock timestamps ───
+function computeElapsed(state: PersistedTimerState): number {
+  if (state.status !== "RUNNING") return state.accumulatedSeconds;
+  return state.accumulatedSeconds + (Date.now() - state.wallStartTime) / 1000;
 }
 
 export default function StudySessionPage() {
@@ -27,94 +61,184 @@ export default function StudySessionPage() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [loading, setLoading] = useState(true);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Refs for the timestamp‑based timer
+  const timerStateRef = useRef<PersistedTimerState | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ─── Tick: compute elapsed from wall‑clock ───
+  const tick = useCallback(() => {
+    if (timerStateRef.current && timerStateRef.current.status === "RUNNING") {
+      setElapsed(Math.floor(computeElapsed(timerStateRef.current)));
+    }
+  }, []);
+
+  // ─── Start the UI update loop ───
+  const startTicking = useCallback(() => {
+    // Use requestAnimationFrame for smooth updates when tab is visible
+    const rafLoop = () => {
+      tick();
+      rafRef.current = requestAnimationFrame(rafLoop);
+    };
+    rafRef.current = requestAnimationFrame(rafLoop);
+
+    // Also run a 1‑second setInterval as a fallback — browsers throttle rAF
+    // in background tabs but still run setInterval (at ~1s minimum). Since we
+    // compute from wall‑clock, the value will jump to the correct time even
+    // after throttling.
+    intervalRef.current = setInterval(tick, 1000);
+  }, [tick]);
+
+  const stopTicking = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  }, []);
+
+  // ─── Fetch session from server ───
   const fetchSession = useCallback(async () => {
     const res = await fetch(`/api/sessions/${id}`);
     if (res.ok) {
       const data = await res.json();
-      setSession(data.session);
-      setElapsed(data.session.state?.currentDurationSeconds || data.session.totalDurationSeconds || 0);
+      const s: SessionData = data.session;
+      setSession(s);
+
+      const serverElapsed = s.state?.currentDurationSeconds ?? s.totalDurationSeconds ?? 0;
+
+      // Try to recover persisted wall‑clock state
+      const persisted = loadTimerState(id);
+
+      if (s.status === "RUNNING") {
+        if (persisted && persisted.status === "RUNNING") {
+          // Persisted state exists — use it (covers page refresh)
+          timerStateRef.current = persisted;
+        } else {
+          // No persisted state (first load or after clear) — initialise
+          timerStateRef.current = {
+            wallStartTime: Date.now(),
+            accumulatedSeconds: serverElapsed,
+            status: "RUNNING",
+          };
+          saveTimerState(id, timerStateRef.current);
+        }
+        setElapsed(Math.floor(computeElapsed(timerStateRef.current)));
+      } else {
+        timerStateRef.current = {
+          wallStartTime: 0,
+          accumulatedSeconds: serverElapsed,
+          status: s.status,
+        };
+        setElapsed(serverElapsed);
+        if (s.status === "COMPLETED") clearTimerState(id);
+        else saveTimerState(id, timerStateRef.current);
+      }
     }
     setLoading(false);
   }, [id]);
 
   useEffect(() => { fetchSession(); }, [fetchSession]);
 
-  // Keep a ref of elapsed time to avoid resetting intervals every second
-  const elapsedRef = useRef(elapsed);
-  useEffect(() => {
-    elapsedRef.current = elapsed;
-  }, [elapsed]);
-
-  // Timer
+  // ─── Start / stop the tick loop when status changes ───
   useEffect(() => {
     if (session?.status === "RUNNING") {
-      timerRef.current = setInterval(() => setElapsed((p) => p + 1), 1000);
+      startTicking();
+    } else {
+      stopTicking();
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [session?.status]);
+    return stopTicking;
+  }, [session?.status, startTicking, stopTicking]);
 
-  // Heartbeat: auto-save every 30s (no longer recreates every second)
+  // ─── Visibility change: recalculate immediately when tab becomes visible ───
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && timerStateRef.current?.status === "RUNNING") {
+        tick();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [tick]);
+
+  // ─── Heartbeat: auto‑save to server every 30 s ───
   useEffect(() => {
     if (session?.status === "RUNNING") {
       heartbeatRef.current = setInterval(async () => {
+        const currentElapsed = timerStateRef.current ? Math.floor(computeElapsed(timerStateRef.current)) : 0;
         await fetch(`/api/sessions/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsedRef.current }),
+          body: JSON.stringify({ action: "heartbeat", currentDurationSeconds: currentElapsed }),
         });
       }, 30000);
     }
     return () => { if (heartbeatRef.current) clearInterval(heartbeatRef.current); };
   }, [session?.status, id]);
 
-  // Save on unload (no longer recreates every second)
+  // ─── Save on unload via sendBeacon ───
   useEffect(() => {
     const handleUnload = () => {
-      if (session?.status === "RUNNING") {
-        navigator.sendBeacon(`/api/sessions/${id}`, JSON.stringify({ action: "heartbeat", currentDurationSeconds: elapsedRef.current }));
+      if (timerStateRef.current?.status === "RUNNING") {
+        const currentElapsed = Math.floor(computeElapsed(timerStateRef.current));
+        navigator.sendBeacon(
+          `/api/sessions/${id}`,
+          JSON.stringify({ action: "heartbeat", currentDurationSeconds: currentElapsed }),
+        );
       }
     };
     window.addEventListener("beforeunload", handleUnload);
     return () => window.removeEventListener("beforeunload", handleUnload);
-  }, [session?.status, id]);
+  }, [id]);
 
+  // ─── Action handler (pause / resume / stop) ───
   async function handleAction(action: "pause" | "resume" | "stop") {
     if (action === "stop" && !confirm("Stop this session?")) return;
 
-    // Optimistically update the UI to avoid lag
+    const currentElapsed = timerStateRef.current
+      ? Math.floor(computeElapsed(timerStateRef.current))
+      : elapsed;
+
+    // Optimistically update the UI
     const previousSession = session;
+    const previousTimerState = timerStateRef.current ? { ...timerStateRef.current } : null;
+
     if (action === "pause") {
       setSession((prev) => prev ? { ...prev, status: "PAUSED" } : null);
+      timerStateRef.current = { wallStartTime: 0, accumulatedSeconds: currentElapsed, status: "PAUSED" };
+      saveTimerState(id, timerStateRef.current);
+      setElapsed(currentElapsed);
     } else if (action === "resume") {
       setSession((prev) => prev ? { ...prev, status: "RUNNING" } : null);
+      timerStateRef.current = { wallStartTime: Date.now(), accumulatedSeconds: currentElapsed, status: "RUNNING" };
+      saveTimerState(id, timerStateRef.current);
     } else if (action === "stop") {
       setSession((prev) => prev ? { ...prev, status: "COMPLETED" } : null);
+      timerStateRef.current = { wallStartTime: 0, accumulatedSeconds: currentElapsed, status: "COMPLETED" };
+      clearTimerState(id);
+      setElapsed(currentElapsed);
     }
 
     try {
       const res = await fetch(`/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, currentDurationSeconds: elapsed }),
+        body: JSON.stringify({ action, currentDurationSeconds: currentElapsed }),
       });
-      
+
       if (!res.ok) {
-        // Revert on error
         setSession(previousSession);
+        if (previousTimerState) { timerStateRef.current = previousTimerState; saveTimerState(id, previousTimerState); }
         alert("Failed to update study session. Please try again.");
       } else {
         if (action === "stop") {
           router.push("/study");
         } else {
-          // Re-fetch the session in background to sync any other metadata
           fetchSession();
         }
       }
     } catch (err) {
       setSession(previousSession);
+      if (previousTimerState) { timerStateRef.current = previousTimerState; saveTimerState(id, previousTimerState); }
       console.error("Session action error:", err);
     }
   }
@@ -189,3 +313,4 @@ export default function StudySessionPage() {
     </div>
   );
 }
+
